@@ -3,7 +3,7 @@
 #include <util/delay.h>
 #include <stdio.h>
 
-#define TRIG_PIN DDB5
+#define TRIG_PIN DDH3
 #define ECHO_PIN DDB6
 
 volatile uint16_t capture_count = 0;
@@ -110,44 +110,34 @@ ISR(TIMER4_CAPT_vect) {
 	//TIFR1 |= (1 << ICF1);
 }
 
-// void adc_init() {
-// 	/////ADC SETUP///////
-// 	
-// 	//Clear power reduction
-// 	PRR0 &= ~(1<<PRADC);
-// 	// Select Vref = AVcc
-// 	ADMUX |= (1<<REFS0);
-// 	ADMUX &= ~(1<<REFS1);
-// 	//128 prescaler, 125kHz
-// 	ADCSRA |= (1<<ADPS0);
-// 	ADCSRA |= (1<<ADPS1);
-// 	ADCSRA |= (1<<ADPS2);
-// 	//channel 0
-// 	ADMUX &= ~(1<<MUX0);
-// 	ADMUX &= ~(1<<MUX1);
-// 	ADMUX &= ~(1<<MUX2);
-// 	ADMUX &= ~(1<<MUX3);
-// 	//auto trigger
-// 	ADCSRA |= (1<<ADATE);
-// 	//free running
-// 	ADCSRB &= ~(1<<ADTS0);
-// 	ADCSRB &= ~(1<<ADTS1);
-// 	ADCSRB &= ~(1<<ADTS2);
-// 	//Disable digital input buffer
-// 	DIDR0 |= (1<<ADC0D);
-// 	//Enable ADC
-// 	ADCSRA |= (1<<ADEN);
-// 
-// 	//Start conversion
-// 	ADCSRA |= (1<<ADSC);
-// 	
-// 	//Enable interrupt
-// 	ADCSRA |= (1<<ADIE);
-// }
+void adc_init() {
+	/////ADC SETUP///////
+	ADCSRA |= ((1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0));
+	
+	ADMUX |= (1<<REFS0);       //Set Voltage reference to Avcc (5v)
+	
+	ADCSRA |= (1<<ADEN);       //Turn on ADC
+	
+	ADCSRA |= (1<<ADSC);      //Do an initial conversion
+
+}
+
+ISR(ADC_vect)
+{
+	
+}
+uint16_t read_adc(uint8_t channel){
+	ADMUX &= 0xE0;           //Clear bits MUX0-4
+	ADMUX |= channel&0x07;   //Defines the new ADC channel to be read by setting bits MUX0-2
+	ADCSRB = channel&(1<<3); //Set MUX5
+	ADCSRA |= (1<<ADSC);      //Starts a new conversion
+	while(ADCSRA & (1<<ADSC));  //Wait until the conversion is done
+	return ADCW;
+}         //Returns the ADC value of the chosen channel
+
 void ultrasonic_init() {
-	// Set up echo pin as input, ICP1 Timer 1 Capture Input
+	// Set up echo pin as input, ICP4 Timer 4 Capture Input
 	DDRL &= ~(1<<DDL0);
-	DDRD &= ~(1<<DDD4);
 
 	// Set up trig pin as output
 	DDRB |= (1<<TRIG_PIN);
@@ -166,7 +156,9 @@ void ultrasonic_init() {
 	
 	
 	//TIFR1 |= (1 << ICF1);
-	//TCCR1B |= (1<<ICNC1);
+	//noise reduction
+	TCCR1B |= (1<<ICNC1);
+	
 	//looks for rising edge
 	TCCR4B |= (1 << ICES4);
 	
@@ -179,7 +171,26 @@ void ultrasonic_init() {
 }
 
 void servo_init() {
-	
+	DDRB |= (1 << DDB5);
+		
+	//Clear on Compare Match
+	TCCR1A |= (1<<COM1A1);
+	TCCR1A &= ~(1<<COM1A0);
+		
+	//256 prescaling
+	TCCR1B |= (1<<CS12);
+	TCCR1B &= ~(1<<CS11);
+	TCCR1B &= ~(1<<CS10);
+		
+	//Mode 14 fast pwm
+	TCCR1A &= ~(1<<WGM10);
+	TCCR1A |= (1<<WGM11);
+	TCCR1B |= (1<<WGM12);
+	TCCR1B |= (1<<WGM13);
+		
+	//OCR1B = 63;
+	ICR1 = 1249;
+	OCR1A = 250;
 }
 
 
@@ -194,20 +205,23 @@ int main(void)
 	uart_init();
 	
 	//adc_init();
+	servo_init();
 	ultrasonic_init();
 	sei();
 	
 
 	while (1) {
 		// Send trigger pulse
-		PORTB |= (1 << TRIG_PIN);
-		_delay_us(10);
-		PORTB &= ~(1 << TRIG_PIN);
-		_delay_us(60);
+// 		PORTB |= (1 << TRIG_PIN);
+// 		_delay_us(10);
+// 		PORTB &= ~(1 << TRIG_PIN);
+// 		_delay_us(60);
 
-
+		
+		OCR1A = 125;
+		
 		// print_num(OCR0A);
-// 		sprintf(String,"ADC: %u\n", TCNT1);
+// 		sprintf(String,"ADC: %u\n", read_adc(0xF0));
 // 		UART_putstring(String);
 // 		sprintf(String,"test");
 // 		UART_putstring(String);
