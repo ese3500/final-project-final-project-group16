@@ -12,11 +12,12 @@ volatile uint16_t overflow = 0;
 volatile uint16_t end_time = 0;
 volatile uint16_t distance_cm = 0;
 volatile uint8_t is_continous = 1;
+volatile int count = 0;
 #define F_CPU 16000000UL
 #define BAUD_RATE 9600
 #define BAUD_PRESCALER (((16000000UL / (BAUD_RATE * 16UL))) - 1)
 
-
+/////////////////////////////UART///////////////////////////////////
 
 void uart_init(void) {
 	UBRR0H = (unsigned char)(BAUD_PRESCALER>>8);
@@ -75,9 +76,15 @@ void print_adc(uint16_t adc, uint16_t duty_cycle) {
 	sprintf(buffer, "ADC: %u, Duty Cycle: %u%% \n", adc, duty_cycle);
 	uart_transmit_string(buffer);
 }
-
+//////////////////////////////////////////////////////////////////////////
 
 char String[25];
+
+
+
+
+
+
 
 ISR(TIMER4_CAPT_vect) {
 
@@ -106,8 +113,6 @@ ISR(TIMER4_CAPT_vect) {
 		
 	}
 
-
-	//TIFR1 |= (1 << ICF1);
 }
 
 void adc_init() {
@@ -122,10 +127,10 @@ void adc_init() {
 
 }
 
-ISR(ADC_vect)
-{
-	
-}
+// ISR(ADC_vect)
+// {
+// 	
+// }
 uint16_t read_adc(uint8_t channel){
 	ADMUX &= 0xE0;           //Clear bits MUX0-4
 	ADMUX |= channel&0x07;   //Defines the new ADC channel to be read by setting bits MUX0-2
@@ -140,7 +145,7 @@ void ultrasonic_init() {
 	DDRL &= ~(1<<DDL0);
 
 	// Set up trig pin as output
-	DDRB |= (1<<TRIG_PIN);
+	DDRH |= (1<<TRIG_PIN);
 
 	// timer1 setup - prescale 8, normal mode
 	TCCR4B &= ~(1 << CS40); // prescale 8
@@ -157,7 +162,7 @@ void ultrasonic_init() {
 	
 	//TIFR1 |= (1 << ICF1);
 	//noise reduction
-	TCCR1B |= (1<<ICNC1);
+	TCCR4B |= (1<<ICNC4);
 	
 	//looks for rising edge
 	TCCR4B |= (1 << ICES4);
@@ -188,9 +193,30 @@ void servo_init() {
 	TCCR1B |= (1<<WGM12);
 	TCCR1B |= (1<<WGM13);
 		
-	//OCR1B = 63;
+	//OCR1A = 63;
 	ICR1 = 1249;
-	OCR1A = 250;
+}
+
+void servo2_init() {
+	DDRL |= (1 << DDL3);
+	
+	//Clear on Compare Match
+	TCCR5A |= (1<<COM5A1);
+	TCCR5A &= ~(1<<COM5A0);
+	
+	//256 prescaling
+	TCCR5B |= (1<<CS52);
+	TCCR5B &= ~(1<<CS51);
+	TCCR5B &= ~(1<<CS50);
+	
+	//Mode 14 fast pwm
+	TCCR5A &= ~(1<<WGM50);
+	TCCR5A |= (1<<WGM51);
+	TCCR5B |= (1<<WGM52);
+	TCCR5B |= (1<<WGM53);
+	
+	OCR1A = 63;
+	ICR5 = 1249;
 }
 
 
@@ -204,25 +230,34 @@ int main(void)
 	
 	uart_init();
 	
-	//adc_init();
+	adc_init();
 	servo_init();
+	servo2_init();
 	ultrasonic_init();
 	sei();
 	
 
 	while (1) {
 		// Send trigger pulse
-// 		PORTB |= (1 << TRIG_PIN);
-// 		_delay_us(10);
-// 		PORTB &= ~(1 << TRIG_PIN);
-// 		_delay_us(60);
+		PORTH |= (1 << TRIG_PIN);
+		_delay_us(10);
+		PORTH &= ~(1 << TRIG_PIN);
+		_delay_us(60);
+		
+		if ((read_adc(000000) < 400) & (OCR1A <= 125)) {
+			OCR1A++;
+			//OCR5A = 160;
+			//count++;
+			} else if ((read_adc(000000) > 600) & (OCR1A >= 63)) {
+			OCR1A--;
+			} else {
+			count = 0;
+		}
 
 		
-		OCR1A = 125;
-		
 		// print_num(OCR0A);
-// 		sprintf(String,"ADC: %u\n", read_adc(0xF0));
-// 		UART_putstring(String);
+		sprintf(String,"Count: %u\n", OCR1A);
+		UART_putstring(String);
 // 		sprintf(String,"test");
 // 		UART_putstring(String);
 	}
