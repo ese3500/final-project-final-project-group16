@@ -4,15 +4,19 @@
 #include <stdio.h>
 
 #define TRIG_PIN DDH3
-#define ECHO_PIN DDB6
 
 volatile uint16_t capture_count = 0;
 volatile uint16_t start_time = 0;
 volatile uint16_t overflow = 0;
 volatile uint16_t end_time = 0;
 volatile uint16_t distance_cm = 0;
+volatile uint16_t totalDistance = 0;
+volatile uint16_t averageDistance = 0;
+volatile uint16_t tempindex = 0;
 volatile uint8_t is_continous = 1;
 volatile int count = 0;
+volatile int aim = 0;
+const double PI =  3.1415926;
 #define F_CPU 16000000UL
 #define BAUD_RATE 9600
 #define BAUD_PRESCALER (((16000000UL / (BAUD_RATE * 16UL))) - 1)
@@ -79,6 +83,7 @@ void print_adc(uint16_t adc, uint16_t duty_cycle) {
 //////////////////////////////////////////////////////////////////////////
 
 char String[25];
+int distanceArray[10];
 
 
 
@@ -106,10 +111,16 @@ ISR(TIMER4_CAPT_vect) {
 	}
 
 		period = period / 2; // convert to us
-
+		
 		// Convert pulse width to distance
 		distance_cm = period / 58; // div by 58 for cm
-		print_distance(distance_cm);
+		if (tempindex < 9) {
+			tempindex++;
+		} else {
+			tempindex = 0;
+		}
+		distanceArray[tempindex] = distance_cm;
+		//print_distance(distance_cm);
 		
 	}
 
@@ -117,6 +128,7 @@ ISR(TIMER4_CAPT_vect) {
 
 void adc_init() {
 	/////ADC SETUP///////
+	DDRB &= ~(1 << DDB4);//joystick press
 	ADCSRA |= ((1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0));
 	
 	ADMUX |= (1<<REFS0);       //Set Voltage reference to Avcc (5v)
@@ -127,10 +139,22 @@ void adc_init() {
 
 }
 
-// ISR(ADC_vect)
-// {
-// 	
-// }
+int getAngle (double distance) {
+	double initialDistance = 1.8; //max distance it can shoot at 45 degrees;
+	
+	if (distance <= initialDistance) {
+		double initialVelocity = sqrt(initialDistance * 9.81);
+		double angle = 0.5 * asin(9.81 * distance/(initialVelocity * initialVelocity)) * 180 / PI; //solve for angle
+		double ocrFraction = (90-angle)/90;
+		int newAngle = (int) (ocrFraction * (124-62)); // converts angle into ocr value
+// 		sprintf(String,"Angle: %u\n", (int) angle);
+// 		UART_putstring(String);
+		return (62+newAngle); 
+
+	} 
+}
+
+//Returns the ADC value of the chosen channel
 uint16_t read_adc(uint8_t channel){
 	ADMUX &= 0xE0;           //Clear bits MUX0-4
 	ADMUX |= channel&0x07;   //Defines the new ADC channel to be read by setting bits MUX0-2
@@ -138,7 +162,7 @@ uint16_t read_adc(uint8_t channel){
 	ADCSRA |= (1<<ADSC);      //Starts a new conversion
 	while(ADCSRA & (1<<ADSC));  //Wait until the conversion is done
 	return ADCW;
-}         //Returns the ADC value of the chosen channel
+}         
 
 void ultrasonic_init() {
 	// Set up echo pin as input, ICP4 Timer 4 Capture Input
@@ -147,7 +171,7 @@ void ultrasonic_init() {
 	// Set up trig pin as output
 	DDRH |= (1<<TRIG_PIN);
 
-	// timer1 setup - prescale 8, normal mode
+	// timer4 setup - prescale 8, normal mode
 	TCCR4B &= ~(1 << CS40); // prescale 8
 	TCCR4B |= (1 << CS41);
 	TCCR4B &= ~(1 << CS42);
@@ -157,10 +181,6 @@ void ultrasonic_init() {
 	TCCR4B &= ~(1 << WGM42);
 	TCCR4B &= ~(1 << WGM43);
 
-	// set up capture
-	
-	
-	//TIFR1 |= (1 << ICF1);
 	//noise reduction
 	TCCR4B |= (1<<ICNC4);
 	
@@ -175,6 +195,7 @@ void ultrasonic_init() {
 	//sei(); // Enable interrupts
 }
 
+//up down
 void servo_init() {
 	DDRB |= (1 << DDB5);
 		
@@ -193,10 +214,11 @@ void servo_init() {
 	TCCR1B |= (1<<WGM12);
 	TCCR1B |= (1<<WGM13);
 		
-	//OCR1A = 63;
+	OCR1A = 63;
 	ICR1 = 1249;
 }
 
+//pan
 void servo2_init() {
 	DDRL |= (1 << DDL3);
 	
@@ -215,10 +237,31 @@ void servo2_init() {
 	TCCR5B |= (1<<WGM52);
 	TCCR5B |= (1<<WGM53);
 	
-	OCR1A = 63;
+	OCR5A = 93;
 	ICR5 = 1249;
 }
 
+void motor_init() {
+		DDRE |= (1 << DDE3);
+		
+		//Clear on Compare Match
+		TCCR3A |= (1<<COM3A1);
+		TCCR3A &= ~(1<<COM3A0);
+		
+		//256 prescaling
+		TCCR3B |= (1<<CS32);
+		TCCR3B &= ~(1<<CS31);
+		TCCR3B &= ~(1<<CS30);
+		
+		//Mode 14 fast pwm
+		TCCR3A &= ~(1<<WGM30);
+		TCCR3A |= (1<<WGM31);
+		TCCR3B |= (1<<WGM32);
+		TCCR3B |= (1<<WGM33);
+
+		ICR3 = 255;
+		OCR3A = 255;
+}
 
 
 
@@ -229,10 +272,10 @@ int main(void)
 	// initialize all
 	
 	uart_init();
-	
 	adc_init();
 	servo_init();
 	servo2_init();
+	motor_init();
 	ultrasonic_init();
 	sei();
 	
@@ -243,23 +286,49 @@ int main(void)
 		_delay_us(10);
 		PORTH &= ~(1 << TRIG_PIN);
 		_delay_us(60);
+		sprintf(String,"distance: %u\n", averageDistance);
+		UART_putstring(String);
 		
-		if ((read_adc(000000) < 400) & (OCR1A <= 125)) {
+		if ((read_adc(000000) < 300) & (OCR1A < 125)) {
 			OCR1A++;
-			//OCR5A = 160;
-			//count++;
-			} else if ((read_adc(000000) > 600) & (OCR1A >= 63)) {
+			} else if ((read_adc(000000) > 700) & (OCR1A > 62)) {
 			OCR1A--;
-			} else {
-			count = 0;
+			} 
+		if ((read_adc(000001) < 300) & (OCR5A > 62)) {
+			OCR5A--;
+			} else if ((read_adc(000001) > 700) & (OCR5A < 125)) {
+			OCR5A++;
+
+			//OCR1A = getAngle((double) averageDistance / 100);
+			} 
+			
+		
+//  		if (PINB & (1<<PINB4) && (aim == 0)) {
+//  			aim = 1;
+// 			sprintf(String,"YES \n");
+// 			UART_putstring(String);
+//  			OCR1A = getAngle((double) distance_cm / 100);
+//  		} else if (PINB & (1<<PINB4) && (aim == 1)) {
+//  			aim = 0;
+//  		}
+		totalDistance = 0;
+		for (int i = 0; i<10; i++) {
+			totalDistance += distanceArray[i];
 		}
+		averageDistance = (int)(totalDistance / 10);
+		
+
 
 		
 		// print_num(OCR0A);
-		sprintf(String,"Count: %u\n", OCR1A);
+
+		sprintf(String,"OCR5A: %u\n", OCR5A);
 		UART_putstring(String);
-// 		sprintf(String,"test");
+// 		sprintf(String,"OCR1A: %u\n", OCR1A);
 // 		UART_putstring(String);
+
+ 		//sprintf(String,"test");
+ 		//UART_putstring(String);
 	}
 }
 
